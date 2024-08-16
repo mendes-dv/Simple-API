@@ -4,6 +4,12 @@ import (
 	"math/rand"
 )
 
+type TransferRequest struct {
+	ToAccount   string `json:"to_account"`
+	FromAccount string `json:"from_account"`
+	Amount      int64  `json:"amount"`
+}
+
 type CreateAccountRequest struct {
 	FirstName string `json:"first_name" binding:"required"`
 	LastName  string `json:"last_name" binding:"required"`
@@ -11,7 +17,7 @@ type CreateAccountRequest struct {
 }
 
 type Account struct {
-	Id        int    `json:"id"`
+	ID        int    `json:"id"`
 	FirstName string `json:"first_name"`
 	LastName  string `json:"last_name"`
 	Balance   int64  `json:"balance"`
@@ -21,7 +27,7 @@ type Account struct {
 
 func NewAccount(firstName string, lastName string, email string) *Account {
 	return &Account{
-		Id:        rand.Intn(10000),
+		ID:        rand.Intn(10000),
 		FirstName: firstName,
 		LastName:  lastName,
 		Number:    int64(rand.Intn(10000000)),
