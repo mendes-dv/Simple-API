@@ -27,6 +27,8 @@ func NewAPIServer(listenAddr string, store Storage) *APIServer {
 func (s *APIServer) Run() {
 	router := mux.NewRouter()
 
+	router.HandleFunc("/login", makeHttpHandleFunc(s.handleLogin))
+
 	router.HandleFunc("/account", makeHttpHandleFunc(s.handleAccount))
 
 	router.HandleFunc("/account/{id}", withJWTAuth(makeHttpHandleFunc(s.handleAccount), s.store))
@@ -36,6 +38,39 @@ func (s *APIServer) Run() {
 	log.Println("Listening on port:", s.listenAddr)
 
 	http.ListenAndServe(s.listenAddr, router)
+}
+
+func (s *APIServer) handleLogin(w http.ResponseWriter, r *http.Request) error {
+	if r.Method == "POST" {
+		var req models.LoginRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			return err
+		}
+
+		number, err := strconv.Atoi(req.Number)
+
+		acc, err := s.store.GetAccountByNumber(number)
+		if err != nil {
+			return err
+		}
+
+		if !models.ValidatePassword(req.Number) {
+			return fmt.Errorf("Invalid password")
+		}
+
+		token, err := createJWT(acc)
+		if err != nil {
+			return err
+		}
+
+		resp := models.LoginResponse{
+			Token: token,
+		}
+
+		return WriteJson(w, http.StatusOK, resp)
+	}
+
+	return WriteJson(w, http.StatusMethodNotAllowed, "method not allowed")
 }
 
 func (s *APIServer) handleAccount(w http.ResponseWriter, r *http.Request) error {
@@ -92,17 +127,11 @@ func (s *APIServer) handleCreateAccount(w http.ResponseWriter, r *http.Request) 
 		return err
 	}
 
-	account := models.NewAccount(createAccountRequest.FirstName, createAccountRequest.LastName, createAccountRequest.Email)
+	account, _ := models.NewAccount(createAccountRequest.FirstName, createAccountRequest.LastName, createAccountRequest.Email, createAccountRequest.Password)
 	err := s.store.CreateAccount(account)
 	if err != nil {
 		return err
 	}
-	tokeString, err := createJWT(account)
-	if err != nil {
-		return err
-	}
-
-	fmt.Println("Token string: ", tokeString)
 
 	return WriteJson(w, http.StatusOK, account)
 }
@@ -187,7 +216,7 @@ func validateJWT(tokenString string) (*jwt.Token, error) {
 	secret := os.Getenv("JWT_SECRET")
 	return jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
-			return nil, fmt.Errorf("Unexpected signing method: %v", token.Header["alg"])
+			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
 		}
 
 		return []byte(secret), nil
