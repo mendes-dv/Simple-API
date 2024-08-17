@@ -4,9 +4,11 @@ import (
 	"awesomeProject/models"
 	"encoding/json"
 	"fmt"
+	jwt "github.com/golang-jwt/jwt/v5"
 	"github.com/gorilla/mux"
 	"log"
 	"net/http"
+	"os"
 	"strconv"
 )
 
@@ -27,7 +29,7 @@ func (s *APIServer) Run() {
 
 	router.HandleFunc("/account", makeHttpHandleFunc(s.handleAccount))
 
-	router.HandleFunc("/account/{id}", makeHttpHandleFunc(s.handleAccount))
+	router.HandleFunc("/account/{id}", withJWTAuth(makeHttpHandleFunc(s.handleAccount), s.store))
 
 	router.HandleFunc("/transfer", makeHttpHandleFunc(s.handleTransfer))
 
@@ -95,8 +97,25 @@ func (s *APIServer) handleCreateAccount(w http.ResponseWriter, r *http.Request) 
 	if err != nil {
 		return err
 	}
+	tokeString, err := createJWT(account)
+	if err != nil {
+		return err
+	}
+
+	fmt.Println("Token string: ", tokeString)
 
 	return WriteJson(w, http.StatusOK, account)
+}
+
+func createJWT(account *models.Account) (string, error) {
+	claims := jwt.MapClaims{
+		"expiresAt":     15000,
+		"accountNumber": account.Number,
+	}
+
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	secretKey := os.Getenv("SECRET_KEY")
+	return token.SignedString([]byte(secretKey)) //
 }
 
 func (s *APIServer) handleDeleteAccount(w http.ResponseWriter, r *http.Request) error {
@@ -126,6 +145,53 @@ func WriteJson(w http.ResponseWriter, status int, v any) error {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
 	return json.NewEncoder(w).Encode(v)
+}
+
+func withJWTAuth(handlerFunc http.HandlerFunc, store Storage) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		fmt.Println("calling JWT middleware")
+		tokenString := r.Header.Get("Authorization")
+		token, err := validateJWT(tokenString)
+		if err != nil {
+			WriteJson(w, http.StatusUnauthorized, APIError{Error: "invalid token"})
+			return
+		}
+
+		if !token.Valid {
+			WriteJson(w, http.StatusUnauthorized, APIError{Error: "invalid token"})
+		}
+
+		userId, err := getId(r)
+		if err != nil {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+
+		account, err := store.GetAccountById(userId)
+		if err != nil {
+			WriteJson(w, http.StatusUnauthorized, APIError{Error: "invalid token"})
+			return
+		}
+
+		claims := token.Claims.(jwt.MapClaims)
+		if account.Number != int64(claims["accountNumber"].(float64)) {
+			WriteJson(w, http.StatusUnauthorized, APIError{Error: "invalid token"})
+			return
+		}
+
+		handlerFunc(w, r)
+	}
+}
+
+func validateJWT(tokenString string) (*jwt.Token, error) {
+	secret := os.Getenv("JWT_SECRET")
+	return jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
+		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, fmt.Errorf("Unexpected signing method: %v", token.Header["alg"])
+		}
+
+		return []byte(secret), nil
+	})
 }
 
 type APIFunc func(w http.ResponseWriter, r *http.Request) error
